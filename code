@@ -1,0 +1,290 @@
+pubspec.yaml (dependencies section)
+
+yaml
+Copy
+Edit
+dependencies:
+  flutter:
+    sdk: flutter
+  provider: ^6.1.0
+  http: ^0.14.0
+  shared_preferences: ^2.2.2
+🔹 main.dart
+
+dart
+Copy
+Edit
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'providers/article_provider.dart';
+import 'screens/home_screen.dart';
+
+void main() {
+  runApp(
+    ChangeNotifierProvider(
+      create: (_) => ArticleProvider(),
+      child: MyApp(),
+    ),
+  );
+}
+
+class MyApp extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'Flutter Article App',
+      theme: ThemeData(primarySwatch: Colors.blue),
+      home: HomeScreen(),
+    );
+  }
+}
+📄 models/article.dart
+
+dart
+Copy
+Edit
+class Article {
+  final int id;
+  final String title;
+  final String body;
+
+  Article({required this.id, required this.title, required this.body});
+
+  factory Article.fromJson(Map<String, dynamic> json) {
+    return Article(
+      id: json['id'],
+      title: json['title'],
+      body: json['body'],
+    );
+  }
+}
+🔧 services/api_service.dart
+
+dart
+Copy
+Edit
+import 'dart:convert';
+import 'package:http/http.dart' as http;
+import '../models/article.dart';
+
+class ApiService {
+  static Future<List<Article>> fetchArticles() async {
+    final url = Uri.parse('https://jsonplaceholder.typicode.com/posts');
+    final response = await http.get(url);
+
+    if (response.statusCode == 200) {
+      final List data = jsonDecode(response.body);
+      return data.map((json) => Article.fromJson(json)).toList();
+    } else {
+      throw Exception('Failed to load articles');
+    }
+  }
+}
+🔁 providers/article_provider.dart
+
+dart
+Copy
+Edit
+import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import '../models/article.dart';
+import '../services/api_service.dart';
+
+class ArticleProvider extends ChangeNotifier {
+  List<Article> _articles = [];
+  List<Article> get articles => _articles;
+
+  List<Article> _favorites = [];
+  List<Article> get favorites => _favorites;
+
+  bool _loading = false;
+  String _error = '';
+  String _query = '';
+
+  bool get isLoading => _loading;
+  String get error => _error;
+
+  List<Article> get filteredArticles {
+    return _articles.where((article) =>
+      article.title.toLowerCase().contains(_query.toLowerCase()) ||
+      article.body.toLowerCase().contains(_query.toLowerCase())).toList();
+  }
+
+  ArticleProvider() {
+    fetchArticles();
+    loadFavorites();
+  }
+
+  Future<void> fetchArticles() async {
+    _loading = true;
+    _error = '';
+    notifyListeners();
+    try {
+      _articles = await ApiService.fetchArticles();
+    } catch (e) {
+      _error = e.toString();
+    }
+    _loading = false;
+    notifyListeners();
+  }
+
+  void setQuery(String q) {
+    _query = q;
+    notifyListeners();
+  }
+
+  void toggleFavorite(Article article) {
+    if (_favorites.any((a) => a.id == article.id)) {
+      _favorites.removeWhere((a) => a.id == article.id);
+    } else {
+      _favorites.add(article);
+    }
+    saveFavorites();
+    notifyListeners();
+  }
+
+  bool isFavorite(Article article) {
+    return _favorites.any((a) => a.id == article.id);
+  }
+
+  void saveFavorites() async {
+    final prefs = await SharedPreferences.getInstance();
+    prefs.setStringList('favorites', _favorites.map((a) => a.id.toString()).toList());
+  }
+
+  void loadFavorites() async {
+    final prefs = await SharedPreferences.getInstance();
+    final favIds = prefs.getStringList('favorites') ?? [];
+    _favorites = _articles.where((a) => favIds.contains(a.id.toString())).toList();
+    notifyListeners();
+  }
+}
+🏠 screens/home_screen.dart
+
+dart
+Copy
+Edit
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import '../providers/article_provider.dart';
+import '../widgets/article_card.dart';
+import 'detail_screen.dart';
+import '../models/article.dart';
+
+class HomeScreen extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    final provider = Provider.of<ArticleProvider>(context);
+
+    return Scaffold(
+      appBar: AppBar(title: Text('Articles')),
+      body: RefreshIndicator(
+        onRefresh: () => provider.fetchArticles(),
+        child: Column(
+          children: [
+            Padding(
+              padding: EdgeInsets.all(8),
+              child: TextField(
+                decoration: InputDecoration(
+                  hintText: 'Search by title or body',
+                  prefixIcon: Icon(Icons.search),
+                  border: OutlineInputBorder(),
+                ),
+                onChanged: (value) => provider.setQuery(value),
+              ),
+            ),
+            if (provider.isLoading)
+              Expanded(child: Center(child: CircularProgressIndicator()))
+            else if (provider.error.isNotEmpty)
+              Expanded(child: Center(child: Text(provider.error)))
+            else
+              Expanded(
+                child: ListView.builder(
+                  itemCount: provider.filteredArticles.length,
+                  itemBuilder: (context, index) {
+                    final article = provider.filteredArticles[index];
+                    return ArticleCard(
+                      article: article,
+                      onTap: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => DetailScreen(article: article),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+📄 screens/detail_screen.dart
+
+dart
+Copy
+Edit
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import '../models/article.dart';
+import '../providers/article_provider.dart';
+
+class DetailScreen extends StatelessWidget {
+  final Article article;
+
+  DetailScreen({required this.article});
+
+  @override
+  Widget build(BuildContext context) {
+    final provider = Provider.of<ArticleProvider>(context);
+
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(article.title),
+        actions: [
+          IconButton(
+            icon: Icon(
+              provider.isFavorite(article)
+                  ? Icons.favorite
+                  : Icons.favorite_border,
+            ),
+            onPressed: () => provider.toggleFavorite(article),
+          ),
+        ],
+      ),
+      body: Padding(
+        padding: EdgeInsets.all(16),
+        child: Text(article.body, style: TextStyle(fontSize: 16)),
+      ),
+    );
+  }
+}
+🧱 widgets/article_card.dart
+
+dart
+Copy
+Edit
+import 'package:flutter/material.dart';
+import '../models/article.dart';
+
+class ArticleCard extends StatelessWidget {
+  final Article article;
+  final VoidCallback onTap;
+
+  ArticleCard({required this.article, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      margin: EdgeInsets.all(8),
+      elevation: 4,
+      child: ListTile(
+        title: Text(article.title, maxLines: 1, overflow: TextOverflow.ellipsis),
+        subtitle: Text(article.body, maxLines: 2, overflow: TextOverflow.ellipsis),
+        onTap: onTap,
+      ),
+    );
+  }
+}
